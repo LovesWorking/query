@@ -779,8 +779,7 @@ export const ContentView: Component<ContentViewProps> = (props) => {
                   'tsqd-text-logo-query-flavor',
                 )}
               >
-                {useQueryDevtoolsContext().queryFlavor} v
-                {useQueryDevtoolsContext().version}
+                External Devtools
               </span>
             </button>
             <RadioGroup.Root
@@ -933,10 +932,17 @@ export const ContentView: Component<ContentViewProps> = (props) => {
 
           <div class={cx(styles().actionsContainer, 'tsqd-actions-container')}>
             <button
+              id={
+                selectedView() === 'queries'
+                  ? 'clear-query-cache-btn'
+                  : 'clear-mutation-cache-btn'
+              }
               onClick={() => {
                 if (selectedView() === 'queries') {
+                  sendDevToolsEvent({ type: 'CLEAR_QUERY_CACHE' })
                   query_cache().clear()
                 } else {
+                  sendDevToolsEvent({ type: 'CLEAR_MUTATION_CACHE' })
                   mutation_cache().clear()
                 }
               }}
@@ -1775,7 +1781,7 @@ const QueryDetails = () => {
   const color = createMemo(() => getQueryStatusColorByLabel(statusLabel()))
 
   const handleRefetch = () => {
-    notifyDevtools(queryClient, activeQuery(), 'REFETCH')
+    sendDevToolsEvent({ type: 'REFETCH', queryHash: activeQuery()?.queryHash })
     const promise = activeQuery()?.fetch()
     promise?.catch(() => {})
   }
@@ -1783,7 +1789,11 @@ const QueryDetails = () => {
   const triggerError = (errorType?: DevtoolsErrorType) => {
     const activeQueryVal = activeQuery()
     if (!activeQueryVal) return
-    notifyDevtools(queryClient, activeQueryVal, 'TRIGGER_ERROR')
+    sendDevToolsEvent({
+      type: 'TRIGGER_ERROR',
+      queryHash: activeQueryVal.queryHash,
+      metadata: { error: errorType?.name },
+    })
     const error =
       errorType?.initializer(activeQueryVal) ??
       new Error('Unknown error from devtools')
@@ -1802,8 +1812,13 @@ const QueryDetails = () => {
   }
 
   const restoreQueryAfterLoadingOrError = () => {
-    notifyDevtools(queryClient, activeQuery(), 'RESTORE_LOADING')
-    const activeQueryVal = activeQuery()!
+    const activeQueryVal = activeQuery()
+    if (!activeQueryVal) return
+
+    sendDevToolsEvent({
+      type: 'RESTORE_LOADING',
+      queryHash: activeQueryVal.queryHash,
+    })
     const previousState = activeQueryVal.state
     const previousOptions = activeQueryVal.state.fetchMeta
       ? (activeQueryVal.state.fetchMeta as any).__previousQueryOptions
@@ -1913,7 +1928,10 @@ const QueryDetails = () => {
               'tsqd-query-details-action-invalidate',
             )}
             onClick={() => {
-              notifyDevtools(queryClient, activeQuery(), 'INVALIDATE')
+              sendDevToolsEvent({
+                type: 'INVALIDATE',
+                queryHash: activeQuery()?.queryHash,
+              })
               queryClient.invalidateQueries(activeQuery())
             }}
             disabled={queryStatus() === 'pending'}
@@ -1934,7 +1952,10 @@ const QueryDetails = () => {
               'tsqd-query-details-action-reset',
             )}
             onClick={() => {
-              notifyDevtools(queryClient, activeQuery(), 'RESET')
+              sendDevToolsEvent({
+                type: 'RESET',
+                queryHash: activeQuery()?.queryHash,
+              })
               queryClient.resetQueries(activeQuery())
             }}
             disabled={queryStatus() === 'pending'}
@@ -1955,7 +1976,10 @@ const QueryDetails = () => {
               'tsqd-query-details-action-remove',
             )}
             onClick={() => {
-              notifyDevtools(queryClient, activeQuery(), 'REMOVE')
+              sendDevToolsEvent({
+                type: 'REMOVE',
+                queryHash: activeQuery()?.queryHash,
+              })
               queryClient.removeQueries(activeQuery())
               setSelectedQueryHash(null)
             }}
@@ -1982,9 +2006,12 @@ const QueryDetails = () => {
                 setRestoringLoading(true)
                 restoreQueryAfterLoadingOrError()
               } else {
-                notifyDevtools(queryClient, activeQuery(), 'TRIGGER_LOADING')
                 const activeQueryVal = activeQuery()
                 if (!activeQueryVal) return
+                sendDevToolsEvent({
+                  type: 'TRIGGER_LOADING',
+                  queryHash: activeQueryVal.queryHash,
+                })
                 const __previousQueryOptions = activeQueryVal.options
                 // Trigger a fetch in order to trigger suspense as well.
                 activeQueryVal.fetch({
@@ -2027,7 +2054,10 @@ const QueryDetails = () => {
                 if (!activeQuery()!.state.error) {
                   triggerError()
                 } else {
-                  notifyDevtools(queryClient, activeQuery(), 'RESTORE_ERROR')
+                  sendDevToolsEvent({
+                    type: 'RESTORE_ERROR',
+                    queryHash: activeQuery()?.queryHash,
+                  })
                   queryClient.resetQueries(activeQuery())
                 }
               }}
@@ -2460,30 +2490,35 @@ const createSubscribeToMutationCacheBatcher = <T,>(
   return value
 }
 
-const DevtoolsActions = {
-  REFETCH: 'ACTION-REFETCH',
-  INVALIDATE: 'ACTION-INVALIDATE',
-  RESET: 'ACTION-RESET',
-  REMOVE: 'ACTION-REMOVE',
-  TRIGGER_ERROR: 'ACTION-TRIGGER-ERROR',
-  RESTORE_ERROR: 'ACTION-RESTORE-ERROR',
-  TRIGGER_LOADING: 'ACTION-TRIGGER-LOADING',
-  RESTORE_LOADING: 'ACTION-RESTORE-LOADING',
-} as const
+export type DevToolsActionType =
+  | 'REFETCH'
+  | 'INVALIDATE'
+  | 'RESET'
+  | 'REMOVE'
+  | 'TRIGGER_ERROR'
+  | 'RESTORE_ERROR'
+  | 'TRIGGER_LOADING'
+  | 'RESTORE_LOADING'
+  | 'CLEAR_MUTATION_CACHE'
+  | 'CLEAR_QUERY_CACHE'
 
-const notifyDevtools = (
-  queryClient: QueryClient,
-  query: Query | undefined,
-  actionType: keyof typeof DevtoolsActions,
-) => {
-  if (!queryClient || !query) return
-  queryClient.getQueryCache().notify({
-    query,
-    type: 'updated',
-    action: {
-      type: DevtoolsActions[actionType],
-    },
+export const DEV_TOOLS_EVENT = '@tanstack/query-devtools-event'
+
+export const sendDevToolsEvent = ({
+  type,
+  queryHash,
+  metadata,
+}: {
+  type: DevToolsActionType
+  queryHash?: string
+  metadata?: Record<string, unknown>
+}) => {
+  const event = new CustomEvent(DEV_TOOLS_EVENT, {
+    detail: { type, queryHash, metadata },
+    bubbles: true,
+    cancelable: true,
   })
+  window.dispatchEvent(event)
 }
 
 const stylesFactory = (

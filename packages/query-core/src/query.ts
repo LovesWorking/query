@@ -165,6 +165,13 @@ export interface RestoreLoadingActionEvent {
   type: 'ACTION-RESTORE-LOADING'
 }
 
+export interface ClearMutationCacheAction {
+  type: 'ACTION-CLEAR-MUTATION-CACHE'
+}
+
+export interface ClearQueryCacheAction {
+  type: 'ACTION-CLEAR-QUERY-CACHE'
+}
 interface SetStateAction<TData, TError> {
   type: 'setState'
   state: Partial<QueryState<TData, TError>>
@@ -188,6 +195,8 @@ export type Action<TData, TError> =
   | TriggerLoadingActionEvent
   | ResetActionEvent
   | InvalidateActionEvent
+  | ClearMutationCacheAction
+  | ClearQueryCacheAction
 
 export interface SetStateOptions {
   meta?: any
